@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { ApiError } from "../utils/ApiError.js";
 
 let client = null;
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.6-flash";
 
 const getClient = () => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
