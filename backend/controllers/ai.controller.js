@@ -5,7 +5,7 @@ import {
     generateLeadSummary,
     generateEmail,
     generateSalesInsights,
-    isAIConfigured,
+    getAIConfiguration,
 } from "../services/ai.service.js";
 
 const resolveLead = async (req) => {
@@ -19,10 +19,11 @@ const resolveLead = async (req) => {
 };
 
 export const aiStatus = asyncHandler(async (req, res) => {
+    const configuration = getAIConfiguration();
     res.json({
         success: true,
-        configured: isAIConfigured(),
-        model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+        configured: configuration.configured,
+        model: configuration.model,
     });
 });
 

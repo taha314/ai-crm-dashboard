@@ -2,9 +2,10 @@ import { GoogleGenAI } from "@google/genai";
 import { ApiError } from "../utils/ApiError.js";
 
 let client = null;
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 const getClient = () => {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     throw new ApiError(
       503,
@@ -15,15 +16,62 @@ const getClient = () => {
   return client;
 };
 
-const MODEL = () => process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const MODEL = () => process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
 
-export const isAIConfigured = () => Boolean(process.env.GEMINI_API_KEY);
+export const getAIConfiguration = () => {
+  const apiKeyConfigured = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const model = MODEL();
+
+  return {
+    configured: apiKeyConfigured && Boolean(model),
+    apiKeyConfigured,
+    model,
+  };
+};
+
+export const isAIConfigured = () => getAIConfiguration().configured;
+
+const classifyGeminiError = (err) => {
+  const status = Number(err?.status || err?.statusCode || err?.code);
+  const message = String(err?.message || "");
+  const lowerMessage = message.toLowerCase();
+
+  if (status === 401 || status === 403 || /api key|unauthori[sz]ed|forbidden/.test(lowerMessage)) {
+    return "invalid-key";
+  }
+  if (status === 404 || /model|not found|unsupported/.test(lowerMessage)) {
+    return "invalid-model";
+  }
+  if (status === 429 || /quota|rate limit|resource exhausted/.test(lowerMessage)) {
+    return "quota";
+  }
+  if (status >= 500 || /timeout| unavailable|provider|upstream/.test(lowerMessage)) {
+    return "provider";
+  }
+  return "request";
+};
+
+const redact = (value) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  return String(value || "unknown").replace(apiKey || "\u0000", "[REDACTED]");
+};
+
+const logGeminiFailure = (operation, model, err, category) => {
+  console.error("Gemini request failed", {
+    operation,
+    model,
+    category,
+    status: err?.status || err?.statusCode || undefined,
+    message: redact(err?.message),
+  });
+};
 
 const generateJSON = async (prompt, schema) => {
   const ai = getClient();
+  const model = MODEL();
   try {
     const response = await ai.models.generateContent({
-      model: MODEL(),
+      model,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -31,24 +79,33 @@ const generateJSON = async (prompt, schema) => {
         temperature: 0.6,
       },
     });
+    if (!response?.text) throw new Error("Gemini returned an empty response");
     return JSON.parse(response.text);
   } catch (err) {
-    console.error("Gemini JSON error:", err?.message || err);
+    const category = err instanceof SyntaxError || /empty response/.test(err?.message || "")
+      ? "response-parsing"
+      : classifyGeminiError(err);
+    logGeminiFailure("json", model, err, category);
     throw new ApiError(502, "AI request failed. Please try again in a moment.");
   }
 };
 
 const generateText = async (prompt, temperature = 0.7) => {
   const ai = getClient();
+  const model = MODEL();
   try {
     const response = await ai.models.generateContent({
-      model: MODEL(),
+      model,
       contents: prompt,
       config: { temperature },
     });
+    if (!response?.text?.trim()) throw new Error("Gemini returned an empty response");
     return response.text.trim();
   } catch (err) {
-    console.error("Gemini text error:", err?.message || err);
+    const category = /empty response/.test(err?.message || "")
+      ? "response-parsing"
+      : classifyGeminiError(err);
+    logGeminiFailure("text", model, err, category);
     throw new ApiError(502, "AI request failed. Please try again in a moment.");
   }
 };
